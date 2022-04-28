@@ -13,9 +13,18 @@ IRrecv irrecv(11);
 decode_results results; 
 RTCDateTime dt;
 
+struct Color {
+  int r;
+  int g;
+  int b;
+};
+
 int isClockOn = 1;
+int isInverted = 0;
 int brightness = 100;
+uint32_t black = strip.Color(0, 0, 0);
 unsigned long lastIRValue = 0xFFFFFFFF;
+Color currentColor = {255, 0, 0};
 
 int dots[] = {85, 123};  
 
@@ -59,7 +68,13 @@ void loop() {
   }
 
   if (isClockOn) {
-    updateClock();
+    uint32_t color = createColor(currentColor);
+
+    if (isInverted) {
+      updateClock(black, color);
+    } else {
+      updateClock(color, black);
+    }
   } else {
     strip.clear();
     strip.show();
@@ -68,9 +83,8 @@ void loop() {
   delay(100);
 }
 
-void updateClock() {
+void updateClock(uint32_t foregroundColor, uint32_t backgroundColor) {
   dt = clock.getDateTime();
-  uint32_t color = createColor(255, 0, 0);
 
   int h1 = dt.hour / 10;
   int h2 = dt.hour % 10;
@@ -78,14 +92,18 @@ void updateClock() {
   int m2 = dt.minute % 10;
   
   strip.clear();
+
+  for(int i = 0; i < LED_COUNT; i++) {
+    strip.setPixelColor(i, backgroundColor);
+  }
   
-  showDigit(h1, 0, color);
-  showDigit(h2, 1, color);
-  showDigit(m1, 2, color);
-  showDigit(m2, 3, color);
+  showDigit(h1, 0, foregroundColor);
+  showDigit(h2, 1, foregroundColor);
+  showDigit(m1, 2, foregroundColor);
+  showDigit(m2, 3, foregroundColor);
 
   if (dt.second % 2 == 0) {
-    showDots(color);
+    showDots(foregroundColor);
   }
   
   strip.show();
@@ -104,15 +122,17 @@ void showDots(uint32_t color) {
   strip.setPixelColor(dots[1], color);
 }
 
-uint32_t createColor(int r, int g, int b) {
-  return strip.Color((brightness*r/255), (brightness*g/255), (brightness*b/255));
+uint32_t createColor(Color color) {
+  return strip.Color((brightness*color.r/255), (brightness*color.g/255), (brightness*color.b/255));
 }
 
 void translateIR() {
   switch(results.value) {
     // REPEAT
-    case 0xFFFFFFFF: 
-      processIR(lastIRValue);
+    case 0xFFFFFFFF:
+      if (results.value != 0xFF629D && results.value != 0xFFC23D) {
+        processIR(lastIRValue);
+      }
       break;
     default:
       processIR(results.value);
@@ -122,23 +142,66 @@ void translateIR() {
 
 void processIR(unsigned long value) {
   switch(value) {
-    // POWER
-    case 0xFFA25D: 
+    // VOL+ / CH
+    case 0xFF629D:
       isClockOn = isClockOn ? 0 : 1; 
       break;
-    // VOL+
-    case 0xFF629D:
-      brightness += 5;
-      if (brightness > 255) {
-        brightness = 255; 
-      }
+    // FAST FORWARD / PAUSE
+    case 0xFFC23D:
+      isInverted = isInverted ? 0 : 1; 
       break;
-    // VOL-
-    case 0xFFA857:
-      brightness -= 5;
-      if (brightness < 0) {
-        brightness = 0; 
-      }
+    // FUNC|STOP / CH+
+    case 0xFFE21D:
+      changeValue(&brightness, 5);
+      break;
+    // POWER / CH-
+    case 0xFFA25D: 
+      changeValue(&brightness, -5);
+      break;
+    // 1
+    case 0xFF30CF:
+      currentColor = {255, 0, 0}; 
+      break;
+    // 2
+    case 0xFF18E7: 
+      currentColor = {0, 255, 0}; 
+      break;
+    // 3
+    case 0xFF7A85: 
+      currentColor = {0, 0, 255}; 
+      break;
+    // 4
+    case 0xFF10EF:
+      changeValue(&currentColor.r, 10); 
+      break;
+    // 5
+    case 0xFF38C7: 
+      changeValue(&currentColor.g, 10); 
+      break;
+    // 6
+    case 0xFF5AA5: 
+      changeValue(&currentColor.b, 10); 
+      break;
+    // 7
+    case 0xFF42BD: 
+      changeValue(&currentColor.r, -10); 
+      break;
+    // 8
+    case 0xFF4AB5: 
+      changeValue(&currentColor.g, -10); 
+      break;
+    // 9
+    case 0xFF52AD: 
+      changeValue(&currentColor.b, -10); 
       break;
   }  
+}
+
+void changeValue(int *var, int delta) {
+  *var = *var + delta;
+  if (*var < 0) {
+    *var = 0;
+  } else if (*var > 255){
+    *var = 255;
+  }
 }
