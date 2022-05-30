@@ -21,10 +21,12 @@ struct Color {
 
 int isClockOn = 1;
 int isInverted = 0;
-int brightness = 100;
+int isRainbow = 0;
+int brightness = 255;
 uint32_t black = strip.Color(0, 0, 0);
 unsigned long lastIRValue = 0xFFFFFFFF;
 Color currentColor = {255, 0, 0};
+long rainbowHue = 0;
 
 int dots[] = {85, 123};  
 
@@ -49,32 +51,29 @@ int digits[10][15] = {
 };
 
 void setup() {
+  Serial.begin(9600);
+  
   clock.begin(); // Initialize DS3231
   // Send sketch compiling time to Arduino
   clock.setDateTime(__DATE__, __TIME__); 
 
   strip.begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
   strip.show(); // Turn OFF all pixels ASAP
-  strip.setBrightness(brightness); // Set BRIGHTNESS to about 1/5 (max = 255)
+  strip.setBrightness(255); // Set BRIGHTNESS to about 1/5 (max = 255)
 
   irrecv.enableIRIn(); // Start the receiver
 }
 
 void loop() {
-  // have we received an IR signal?
   if (irrecv.decode(&results)) {
-    translateIR(); 
+    translateIR();
     irrecv.resume();
   }
 
+  // have we received an IR signal?
   if (isClockOn) {
-    uint32_t color = createColor(currentColor);
-
-    if (isInverted) {
-      updateClock(black, color);
-    } else {
-      updateClock(color, black);
-    }
+    updateClock();
+    if(isRainbow) updateRainbow();
   } else {
     strip.clear();
     strip.show();
@@ -83,7 +82,7 @@ void loop() {
   delay(100);
 }
 
-void updateClock(uint32_t foregroundColor, uint32_t backgroundColor) {
+void updateClock() {
   dt = clock.getDateTime();
 
   int h1 = dt.hour / 10;
@@ -93,33 +92,37 @@ void updateClock(uint32_t foregroundColor, uint32_t backgroundColor) {
   
   strip.clear();
 
-  for(int i = 0; i < LED_COUNT; i++) {
-    strip.setPixelColor(i, backgroundColor);
+  for(int i = 0; i < strip.numPixels(); i++) {
+    setPixel(i, isInverted);
   }
   
-  showDigit(h1, 0, foregroundColor);
-  showDigit(h2, 1, foregroundColor);
-  showDigit(m1, 2, foregroundColor);
-  showDigit(m2, 3, foregroundColor);
+  showDigit(h1, 0);
+  showDigit(h2, 1);
+  showDigit(m1, 2);
+  showDigit(m2, 3);
 
   if (dt.second % 2 == 0) {
-    showDots(foregroundColor);
+    setPixel(dots[0], !isInverted);
+    setPixel(dots[1], !isInverted);
   }
   
   strip.show();
 }
 
-void showDigit(int digit, int pos, uint32_t color) {
+void showDigit(int digit, int pos) {
   for(int i = 0; i < 15; i++) {
     if (digits[digit][i] == 1) {
-      strip.setPixelColor(positions[pos][i], color);
+      setPixel(positions[pos][i], !isInverted);
     }
   }
 }
 
-void showDots(uint32_t color) {
-  strip.setPixelColor(dots[0], color);
-  strip.setPixelColor(dots[1], color);
+void setPixel(int pixel, int visible) {
+  uint32_t pixelColor = black;
+  if (visible && !isRainbow) pixelColor = createColor(currentColor);
+  if (visible && isRainbow) pixelColor = calculateRainbowColor(pixel);
+
+  strip.setPixelColor(pixel, pixelColor);
 }
 
 uint32_t createColor(Color color) {
@@ -130,7 +133,7 @@ void translateIR() {
   switch(results.value) {
     // REPEAT
     case 0xFFFFFFFF:
-      if (results.value != 0xFF629D && results.value != 0xFFC23D) {
+      if (results.value != 0xFF629D && results.value != 0xFFC23D && results.value != 0xFF906F) {
         processIR(lastIRValue);
       }
       break;
@@ -141,14 +144,23 @@ void translateIR() {
 }
 
 void processIR(unsigned long value) {
+  Serial.println("processIR");
+  Serial.println(value);
+  Serial.println(0xFF906F);
+
   switch(value) {
     // VOL+ / CH
     case 0xFF629D:
-      isClockOn = isClockOn ? 0 : 1; 
+      isClockOn = !isClockOn; 
       break;
     // FAST FORWARD / PAUSE
     case 0xFFC23D:
-      isInverted = isInverted ? 0 : 1; 
+      isInverted = !isInverted; 
+      break;
+    // UP / EQ
+    case 0xFF906F:
+      isRainbow = !isRainbow;
+      Serial.println("Rainbow");
       break;
     // FUNC|STOP / CH+
     case 0xFFE21D:
@@ -204,4 +216,17 @@ void changeValue(int *var, int delta) {
   } else if (*var > 255){
     *var = 255;
   }
+}
+
+void updateRainbow() {
+  rainbowHue += 256;
+  if (rainbowHue >= 5*65536) {
+    rainbowHue = 0;
+  }
+}
+
+uint32_t calculateRainbowColor(int pixel) {
+  int pixelHue = rainbowHue + (pixel * 65536L / strip.numPixels()); 
+
+  return strip.gamma32(strip.ColorHSV(pixelHue, 255, brightness));
 }
