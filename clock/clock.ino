@@ -1,35 +1,35 @@
 #include <Adafruit_NeoPixel.h>
 #include <DS3231.h>
-#include "IRremote.h"
+#include <Wire.h>
 
 #define LED_PIN    6
 #define LED_COUNT 209
+#define I2C_ADDR 9
 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
-DS3231 clock;
-// remote on pin 11
-IRrecv irrecv(11); 
 
-decode_results results; 
+DS3231 clock;
 RTCDateTime dt;
 
 struct Color {
-  int r;
-  int g;
-  int b;
+  unsigned int r;
+  unsigned int g;
+  unsigned int b;
 };
 
+int loopCounter = 0;
 int isClockOn = 1;
 int isInverted = 0;
 int isRainbow = 0;
-int brightness = 255;
+unsigned int brightness = 150;
 uint32_t black = strip.Color(0, 0, 0);
-unsigned long lastIRValue = 0xFFFFFFFF;
 Color currentColor = {255, 0, 0};
 long rainbowHue = 0;
 
+// Positions of seconds dots.
 int dots[] = {85, 123};  
 
+// Positions of clock digits.
 int positions[4][15] = {
   {74, 73, 72, 77, 78, 79, 112, 111, 110, 115, 116, 117, 150, 149, 148},
   {70, 69, 68, 81, 82, 83, 108, 107, 106, 119, 120, 121, 146, 145, 144},
@@ -37,6 +37,7 @@ int positions[4][15] = {
   {60, 59, 58, 91, 92, 93, 98, 97, 96, 129, 130, 131, 136, 135, 134}
 };
 
+// Layouts of digits (0-9).
 int digits[10][15] = {
   {1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1},  
   {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1},  
@@ -52,38 +53,48 @@ int digits[10][15] = {
 
 void setup() {
   Serial.begin(9600);
-  
-  clock.begin(); // Initialize DS3231
-  // Send sketch compiling time to Arduino
+  Serial.println("Initialize");
+ 
+  // Initialize I2C communication.
+  Wire.begin();
+
+  // Initialize RTC.
+  clock.begin();
   clock.setDateTime(__DATE__, __TIME__); 
+  updateClock();
 
-  strip.begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
-  strip.show(); // Turn OFF all pixels ASAP
-  strip.setBrightness(255); // Set BRIGHTNESS to about 1/5 (max = 255)
-
-  irrecv.enableIRIn(); // Start the receiver
+  // Initialize pixel strip.
+  strip.begin();
+  strip.show();
+  strip.setBrightness(brightness);
 }
 
 void loop() {
-  if (irrecv.decode(&results)) {
-    translateIR();
-    irrecv.resume();
+  loopCounter += 1;
+  
+  if (isClockOn) {
+    updateDisplay();
   }
 
-  // have we received an IR signal?
-  if (isClockOn) {
+  if (loopCounter % 10 == 0) {
     updateClock();
-    if(isRainbow) updateRainbow();
-  } else {
-    strip.clear();
-    strip.show();
+    receiveKey();
   }
   
-  delay(100);
+  delay(20);
 }
 
 void updateClock() {
   dt = clock.getDateTime();
+//  Serial.print(dt.hour);
+//  Serial.print(":");
+//  Serial.print(dt.minute);
+//  Serial.print(":");
+//  Serial.println(dt.second);
+}
+
+void updateDisplay() {
+  if(isRainbow) updateRainbow();
 
   int h1 = dt.hour / 10;
   int h2 = dt.hour % 10;
@@ -129,86 +140,6 @@ uint32_t createColor(Color color) {
   return strip.Color((brightness*color.r/255), (brightness*color.g/255), (brightness*color.b/255));
 }
 
-void translateIR() {
-  switch(results.value) {
-    // REPEAT
-    case 0xFFFFFFFF:
-      if (results.value != 0xFF629D && results.value != 0xFFC23D && results.value != 0xFF906F) {
-        processIR(lastIRValue);
-      }
-      break;
-    default:
-      processIR(results.value);
-      lastIRValue = results.value;
-  }
-}
-
-void processIR(unsigned long value) {
-  Serial.println("processIR");
-  Serial.println(value);
-  Serial.println(0xFF906F);
-
-  switch(value) {
-    // VOL+ / CH
-    case 0xFF629D:
-      isClockOn = !isClockOn; 
-      break;
-    // FAST FORWARD / PAUSE
-    case 0xFFC23D:
-      isInverted = !isInverted; 
-      break;
-    // UP / EQ
-    case 0xFF906F:
-      isRainbow = !isRainbow;
-      Serial.println("Rainbow");
-      break;
-    // FUNC|STOP / CH+
-    case 0xFFE21D:
-      changeValue(&brightness, 5);
-      break;
-    // POWER / CH-
-    case 0xFFA25D: 
-      changeValue(&brightness, -5);
-      break;
-    // 1
-    case 0xFF30CF:
-      currentColor = {255, 0, 0}; 
-      break;
-    // 2
-    case 0xFF18E7: 
-      currentColor = {0, 255, 0}; 
-      break;
-    // 3
-    case 0xFF7A85: 
-      currentColor = {0, 0, 255}; 
-      break;
-    // 4
-    case 0xFF10EF:
-      changeValue(&currentColor.r, 10); 
-      break;
-    // 5
-    case 0xFF38C7: 
-      changeValue(&currentColor.g, 10); 
-      break;
-    // 6
-    case 0xFF5AA5: 
-      changeValue(&currentColor.b, 10); 
-      break;
-    // 7
-    case 0xFF42BD: 
-      changeValue(&currentColor.r, -10); 
-      break;
-    // 8
-    case 0xFF4AB5: 
-      changeValue(&currentColor.g, -10); 
-      break;
-    // 9
-    case 0xFF52AD: 
-      changeValue(&currentColor.b, -10); 
-      break;
-  }  
-}
-
 void changeValue(int *var, int delta) {
   *var = *var + delta;
   if (*var < 0) {
@@ -229,4 +160,72 @@ uint32_t calculateRainbowColor(int pixel) {
   int pixelHue = rainbowHue + (pixel * 65536L / strip.numPixels()); 
 
   return strip.gamma32(strip.ColorHSV(pixelHue, 255, brightness));
+}
+
+void receiveKey() {
+  Wire.requestFrom(I2C_ADDR, 1);
+  
+  byte response = 0;
+  while (Wire.available()) {
+      response = Wire.read();
+  } 
+
+  if (response > 0) {
+    Serial.print("Key: ");
+    Serial.println(response);
+
+    processKey(response);
+  }
+}
+
+void processKey(byte value) {
+  switch(value) {
+    // VOL+ / CH
+    case 1:
+      isClockOn = !isClockOn; 
+      if (!isClockOn) {
+        strip.clear();
+        strip.show();
+      }
+      break;
+    // FAST FORWARD / PAUSE
+    case 2:
+      isInverted = !isInverted; break;
+    // UP / EQ
+    case 3:
+      isRainbow = !isRainbow; break;
+    // FUNC|STOP / CH+
+    case 4:
+      changeValue(&brightness, 10); break;
+    // POWER / CH-
+    case 5: 
+      changeValue(&brightness, -10); break;
+    // 1
+    case 6:
+      currentColor = {255, 0, 0}; break;
+    // 2
+    case 7: 
+      currentColor = {0, 255, 0}; break;
+    // 3
+    case 8: 
+      currentColor = {0, 0, 255}; break;
+    // 4
+    case 9:
+      changeValue(&currentColor.r, 10); break;
+    // 5
+    case 10: 
+      changeValue(&currentColor.g, 10); break;
+    // 6
+    case 11: 
+      changeValue(&currentColor.b, 10); break;
+    // 7
+    case 12: 
+      changeValue(&currentColor.r, -10); break;
+    // 8
+    case 13: 
+      changeValue(&currentColor.g, -10); break;
+    // 9
+    case 14: 
+      changeValue(&currentColor.b, -10); break;
+  }  
 }
