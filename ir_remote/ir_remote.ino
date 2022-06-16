@@ -17,27 +17,25 @@ void setup() {
 
 void loop() {    
   if (irrecv.decode(&results)) {
-    translateIR(); 
+    processIR(); 
     delay(200);
     irrecv.resume();
   }  
 }
 
-void translateIR() {
+void processIR() {
   switch(results.value) {
-    // REPEAT
+    // Wiederholung
     case 0xFFFFFFFF:
-      if (results.value != 0xFF629D && results.value != 0xFFC23D && results.value != 0xFF906F) {
-        processIR(lastValue);
-      }
       break;
     default:
-      processIR(results.value);
       lastValue = results.value;
   }
+
+  translateCode(lastValue);
 }
 
-void processIR(unsigned long value) {
+void translateCode(unsigned long value) {
   switch(value) {
     // VOL+ / CH
     case 0xFF629D: setCurrentCode(1); break;
@@ -67,6 +65,8 @@ void processIR(unsigned long value) {
     case 0xFF4AB5: setCurrentCode(13); break;
     // 9
     case 0xFF52AD: setCurrentCode(14); break;
+    // 0
+    case 0xFF6897: setCurrentCode(15); break;
   }  
 }
 
